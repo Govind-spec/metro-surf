@@ -1,0 +1,54 @@
+{
+  "passed": true,
+  "errors": [],
+  "environmentStats": [
+    {
+      "zone": "SUNNY YARD",
+      "view": "Gameplay",
+      "calls": 929,
+      "triangles": 891036
+    },
+    {
+      "zone": "SUNNY YARD",
+      "view": "Balcony",
+      "calls": 938,
+      "triangles": 895664
+    },
+    {
+      "zone": "SKY MALL",
+      "view": "Gameplay",
+      "calls": 936,
+      "triangles": 959566
+    },
+    {
+      "zone": "SKY MALL",
+      "view": "Balcony",
+      "calls": 948,
+      "triangles": 982240
+    },
+    {
+      "zone": "ROOFTOP GARDENS",
+      "view": "Gameplay",
+      "calls": 939,
+      "triangles": 1088596
+    },
+    {
+      "zone": "ROOFTOP GARDENS",
+      "view": "Balcony",
+      "calls": 949,
+      "triangles": 1088954
+    },
+    {
+      "zone": "BAYVIEW PROMENADE",
+      "view": "Gameplay",
+      "calls": 809,
+      "triangles": 493984
+    },
+    {
+      "zone": "BAYVIEW PROMENADE",
+      "view": "Balcony",
+      "calls": 815,
+      "triangles": 493920
+    }
+  ]
+}

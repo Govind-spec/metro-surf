@@ -1,0 +1,24 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Runner visual verification</title>
+<style>body{margin:0;background:#152033;color:#fff;font:14px system-ui}nav{position:fixed;top:0;left:0;right:0;padding:10px;background:#152033;z-index:2;display:flex;gap:8px;align-items:center}button,select{padding:8px;border-radius:6px;border:0}iframe{position:absolute;top:54px;left:0;border:0;width:100%;height:calc(100% - 54px)}span{margin-left:auto}</style></head><body>
+<nav><b>Runner inspection</b><select id="view"><option>Gameplay</option><option>Rear</option><option>Front</option><option>Side</option></select><select id="pose"><option>Run</option><option>Jump</option><option>Slide</option><option>Lane left</option><option>Lane right</option><option>Bonk</option></select><button id="freeze">Freeze</button><button id="step">Step</button><span id="stats"></span></nav>
+<iframe id="game" src="../endless_runner.html"></iframe>
+<script>
+const frame=document.querySelector('iframe'); let engine, runner, frozen=false, time=0, step=false;
+frame.onload=()=>{
+ engine=frame.contentWindow.eval('GameEngine'); runner=engine.player;
+ engine.state='INSPECT';
+ for(const id of ['screen-start','screen-pause','screen-gameover','hud-header','touch-controls','rift-drawer'])frame.contentDocument.getElementById(id).style.display='none';
+ const scene=engine.scene; const ground=new frame.contentWindow.THREE.Mesh(new frame.contentWindow.THREE.PlaneGeometry(200,200),new frame.contentWindow.THREE.MeshStandardMaterial({color:0xa5c8db,roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-0.08;ground.receiveShadow=true;scene.add(ground);
+ const environment=scene.children.filter(o=>o!==runner.group&&o!==runner.blobShadow&&!o.isLight&&o!==ground);
+ const update=()=>{
+ const view=document.getElementById('view').value,pose=document.getElementById('pose').value;
+ environment.forEach(o=>o.visible=view==='Gameplay');ground.visible=view!=='Gameplay';
+ if(!frozen||step){time+=1/60;step=false;runner.isJumping=pose==='Jump';runner.isSliding=pose==='Slide';runner.vy=pose==='Jump'?2:0;runner.bankAngle=pose==='Lane left'?0.32:pose==='Lane right'?-0.32:0;runner.yawAngle=-runner.bankAngle*0.65;runner.group.position.set(0,pose==='Jump'?0.7:0,0);runner.poseRunner(1/60,1,pose==='Jump'?0.7:0);runner.bonkHalo.visible=pose==='Bonk';if(pose==='Bonk'){runner.bodyPivot.rotation.x=-0.85;runner.headGroup.rotation.z=Math.sin(time*10)*0.18;runner.bonkHalo.rotation.y=time*6;}}
+ if(view==='Gameplay'){engine.camera.position.set(0,4.5,8);engine.camera.lookAt(0,1.5,-15);}else{const p=view==='Front'?[0,1.55,-4.2]:view==='Side'?[4,1.55,0]:[0,1.7,4.2];p[1]+=runner.group.position.y;engine.camera.position.set(...p);engine.camera.lookAt(0,1.12+runner.group.position.y,0);}
+ engine.camera.fov=view==='Gameplay'?60:42;engine.camera.updateProjectionMatrix();
+ document.getElementById('stats').textContent=engine.renderer.info.render.calls+' draws / '+engine.renderer.info.render.triangles.toLocaleString()+' triangles';requestAnimationFrame(update);
+ };update();
+};
+document.getElementById('freeze').onclick=e=>{frozen=!frozen;e.target.textContent=frozen?'Animate':'Freeze'};
+document.getElementById('step').onclick=()=>{frozen=true;step=true;document.getElementById('freeze').textContent='Animate'};
+</script></body></html>

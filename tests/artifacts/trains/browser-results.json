@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "errors": [],
+  "styles": [
+    "default",
+    "city",
+    "neon",
+    "graffiti",
+    "premium"
+  ],
+  "gameplayChecks": [
+    "oncoming train collision",
+    "boarding ramp ascent",
+    "premium roof running"
+  ],
+  "screenshots": [
+    "fleet",
+    "fronts",
+    "sides",
+    "three-quarter views",
+    "gameplay",
+    "roof",
+    "roof-running"
+  ]
+}

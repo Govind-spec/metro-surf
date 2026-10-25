@@ -1,0 +1,58 @@
+METRO DASH reference train update
+
+Reference: WhatsApp Image 2026-10-25 at 16.02.55.jpeg
+
+The five primary designs replace the previous train artwork:
+- Default: pink body, yellow doors/brow/sill, dark windshield, round lamps.
+- City: cream body, cyan doors and destination bar, pink nose, yellow markers.
+- Neon: charcoal body, pink window surround, cyan lights, white bunny emblem.
+- Graffiti: yellow base with pink/cyan/mint/purple paint and character decals.
+- Premium: cream curved cab, pink nose, paired pink/yellow lamp rings.
+
+All designs have 3D window frames, doors, roof vents, wheel bogies,
+undercarriages, bumpers and coupling details. Lead and trailing cars have
+different ends. Elevated background trains use the same designs.
+
+Implementation is confined to CartoonArtFactory's train artwork and
+buildViaductTrains in endless_runner.html. Runner art, spawning, scoring,
+power-ups, collisions and RIFT code were not changed in this update.
+Original train length, width, speed, spacing and 3.65m roof height remain.
+The central roof is continuous; roof equipment sits on its curved shoulders
+within the original envelope, so it does not become an unhandled obstacle.
+Static geometry is batched by material and cached across train instances.
+Lead cars use 12-17 meshes and approximately 26,000-29,000 triangles each.
+
+These are procedural 3D interpretations of the concept sheet, not the
+original production models or pixel-identical replicas. The source models
+were not supplied. Cab proportions follow the existing playable train
+envelope, and rooftop equipment is adapted to preserve roof running.
+The smaller cargo/open-top/event examples on the sheet are not new gameplay
+types; existing multi-car convoys are retained.
+
+All new meshes and canvas textures are generated locally. No external
+model, image download, package or build step is required by the train art.
+The game's existing font/CSS CDNs still prevent a full offline-ready claim.
+
+Run locally:
+  python3 -m http.server 8025 --bind 127.0.0.1
+  http://127.0.0.1:8025/endless_runner.html
+
+Inspect all five trains, fronts, sides, roofs and gameplay placement:
+  http://127.0.0.1:8025/tests/train-preview.html
+This developer preview loads the actual game artwork; the game does not
+load the preview or its staging code.
+
+Regression checks (Node.js, no dependency installation needed):
+  node tests/train-regression.cjs
+Also runs the existing runner/RIFT/scoring/power-up/collision checks.
+Tests finite geometry, shared assets, bounds, 150 roof raycasts, convoy
+spacing, lead-car orientation, ramp attachment and oncoming speed.
+An optional pre-update HTML path verifies that all production source
+outside the two train artwork sections is byte-for-byte unchanged.
+
+Browser checks (optional, Playwright and localhost server required):
+  node tests/browser-smoke.cjs
+Set CHROME_PATH if needed. Uses an isolated headless browser. Checks real
+WebGL rendering, keyboard/RIFT dispatch, an oncoming train collision,
+boarding ramp ascent and roof running. Saves screenshots and results to
+tests/artifacts/trains. Physical camera tracking was not available to test.

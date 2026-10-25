@@ -1,0 +1,42 @@
+METRO DASH character update
+
+Open endless_runner.html directly, or run:
+  python3 -m http.server 8025 --bind 127.0.0.1
+Then open http://127.0.0.1:8025/endless_runner.html
+
+Visual inspection (requires the localhost server):
+  http://127.0.0.1:8025/tests/runner-preview.html
+Select Gameplay / Rear / Front / Side and a pose. Freeze and Step allow
+inspection of the run cycle. This page is a developer tool; the game does
+not load it.
+
+Regression checks (Node.js, no package installation or network needed):
+  node tests/runner-regression.cjs
+An optional original HTML path compares physics at 30/60/120 fps and
+verifies that non-character engine/input JavaScript is unchanged.
+
+Implementation:
+- Custom local 3D meshes with named articulated pivots; no image billboard.
+- The top-right gameplay panel takes priority where the concept sheet's
+  front/back panels differ (hair colors and the side holding the charm).
+- Character materials, clothes, hair, goggles, backpack, shoes, charms,
+  articulated elbows, run/jump/slide poses and visual reset were updated.
+- Physics, hitbox, scoring, obstacles, pickups, camera and RIFT bus preserved.
+- Static details are batched by material within each joint: 69 meshes.
+- The existing Three.js r128 is bundled in assets/vendor with its license.
+
+Limits:
+This is a procedural interpretation of the supplied concept art, not an
+exact replica of a sculpted, skinned production asset. No GLB/GLTF model
+was provided or imported. An exact art-directed sculpt and deformation
+quality still require a custom modeled, textured and rigged asset.
+The revised character and Three.js load locally. Existing Tailwind, Google
+Fonts and Font Awesome CDN dependencies still need packaging before the
+whole game can be called offline-ready.
+RIFT API/postMessage/WebSocket dispatch is tested with simulated input;
+a physical camera and the external RIFT tracking service were not available.
+
+Browser QA (optional, requires Playwright):
+  node tests/browser-smoke.cjs
+Set CHROME_PATH to a Chrome executable on non-macOS systems. Screenshots
+and browser-results.json are saved in tests/artifacts.

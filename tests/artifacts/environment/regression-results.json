@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "zones": 4,
+  "laneRays": 360,
+  "simulatedSeconds": 600,
+  "chunks": 16,
+  "uniqueGeometries": 561,
+  "geometryGrowth": 0
+}

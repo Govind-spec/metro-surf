@@ -1,0 +1,70 @@
+METRO DASH mall-city environment update
+
+Reference: WhatsApp Image 2026-10-25 at 16.07.09.jpeg
+
+The environment now follows the reference's cyan/pink/yellow/cream palette:
+- Recessed shop windows, framed JET SHOP and SUNNY YARD signs, bunny posters.
+- Multi-level malls, glass balconies, escalators and elevated footbridges.
+- Curved mall arches, cyan rail portals, hanging bunny/smiley banners.
+- Planters, flowers, trailing balcony greenery, trees and curved palm fronds.
+- Benches, lamps, shelters, bins and a rooftop bunny landmark.
+- Warm sleepers, silver rails, track fasteners and yellow safety curbs.
+- A blue gradient sky, white clouds, depth haze and glass city towers.
+- Waterfront promenade, water highlights and a distant Ferris wheel.
+
+The four existing visual zones and their scrolling cadence are retained.
+Their themes are now Sunny Yard, Sky Mall, Rooftop Gardens and Bayview
+Promenade. Background cross-trains have supporting decks that follow their
+existing longitudinal motion. Playable train designs are unchanged.
+
+Code:
+  assets/environment/mall-city.js contains the new scenery factory.
+  endless_runner.html loads it and delegates its environment builders to it.
+  Only environment construction, visual zone labels and one background-deck
+  transform update were changed in the existing game code.
+
+Runner and train artwork, camera behavior, lighting setup, RIFT, input,
+obstacle generation, collision detection, scoring and power-ups are
+byte-for-byte unchanged from the pre-environment-update HTML. Scenery uses
+its own palette-preserving materials and sky shader under the existing
+sun/hemisphere lights. Near-world surfaces receive the existing shadows.
+
+All new geometry, shop artwork, glass textures and signs are generated
+locally. No external images, GLB models or new packages are required.
+Repeated static details are batched by material; scenery templates share
+geometry across the existing chunk pool. No new scene objects are allocated
+by the scenery scrolling update.
+
+Run locally:
+  python3 -m http.server 8025 --bind 127.0.0.1
+  http://127.0.0.1:8025/endless_runner.html
+
+Inspect the actual production environment in each zone:
+  http://127.0.0.1:8025/tests/environment-preview.html
+Choose Gameplay, Balcony, Street or Overview. The preview stages the same
+runner and trains for comparison and is not loaded by the playable game.
+
+Regression checks (Node.js; no additional dependencies):
+  node tests/environment-regression.cjs
+  node tests/train-regression.cjs
+The environment test also runs the existing runner, input, scoring,
+power-up and collision checks. It validates 360 lane-clearance raycasts,
+finite geometry, all four zones and a simulated ten-minute scroll at 68 m/s
+with no chunk gaps, geometry growth or detached elevated rail decks.
+An optional pre-update HTML path checks unchanged production source.
+
+Browser checks (Playwright and the localhost server required):
+  node tests/browser-smoke.cjs
+Set CHROME_PATH when Chrome is not at the default macOS location.
+The isolated headless browser checks WebGL compilation, keyboard and RIFT
+dispatch, collisions, ramp ascent and roof running, and captures every
+environment zone. Results and screenshots: tests/artifacts/environment.
+
+Limits:
+This is a procedural recreation of the reference's design and atmosphere,
+not a pixel-identical reconstruction of the illustrated scene. Repetition,
+layout and proportions are adapted to the existing three-lane game.
+No original scene models, materials or lighting rig were supplied.
+Existing font/CSS CDN dependencies still need packaging before the entire
+game is offline-ready; the new scenery itself has no network dependencies.
+Physical camera tracking and arcade-hardware frame rates were not tested.

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>METRO DASH environment inspection</title>
+<style>
+body{margin:0;background:#142536;color:white;font:14px system-ui}nav{position:fixed;inset:0 0 auto;padding:12px 18px;z-index:2;display:flex;gap:12px;align-items:center;background:#142536;height:40px}select{font:inherit;padding:7px 12px;border:0;border-radius:7px}span{margin-left:auto;font-size:12px;color:#b9d6e3}iframe{position:fixed;top:64px;left:0;border:0;width:100%;height:calc(100% - 64px)}
+</style></head><body>
+<nav><b>Mall-city inspection</b><select id="zone"><option value="0">Reference city</option><option value="1">Open mall</option><option value="2">Sky gardens</option><option value="3">Waterfront</option></select><select id="view"><option>Gameplay</option><option>Balcony</option><option>Street</option><option>Overview</option></select><label><input id="trains" type="checkbox" checked>Trains</label><span id="stats">Loading local environment…</span></nav>
+<iframe id="game" src="../endless_runner.html"></iframe>
+<script>
+let engine, ready=false;
+document.getElementById('game').onload=()=>{
+    const frame=document.getElementById('game'),win=frame.contentWindow;
+    engine=win.eval('GameEngine');engine.state='INSPECT';engine.clearEntities();
+    for(const id of ['screen-start','screen-pause','screen-gameover','hud-header','touch-controls','rift-drawer'])frame.contentDocument.getElementById(id).style.display='none';
+    engine.createPlayableTrain(-3.2,-15,false,0);
+    engine.createPlayableTrain(3.2,-23,false,2);
+    engine.createPlayableTrain(-3.2,-30.2,false,0,null,false);
+    for(let i=0;i<14;i++)engine.createStarCoin(0,.95,-6-i*3.8);
+    let previous=-1;
+    const update=()=>{
+        const zone=Number(document.getElementById('zone').value),view=document.getElementById('view').value;
+        if(zone!==previous){engine.trackChunks.forEach(c=>engine.configureTrackChunkZone(c,zone));previous=zone;}
+        for(const obstacle of engine.obstacles)obstacle.group.visible=document.getElementById('trains').checked;
+        const camera=engine.camera;
+        if(view==='Gameplay'){camera.position.set(0,4.5,8);camera.lookAt(0,1.5,-15);camera.fov=60;}
+        if(view==='Balcony'){camera.position.set(-4,11,13);camera.lookAt(0,5,-38);camera.fov=65;}
+        if(view==='Street'){camera.position.set(1,4.7,7);camera.lookAt(-6,4.3,-13);camera.fov=67;}
+        if(view==='Overview'){camera.position.set(0,16,27);camera.lookAt(0,6,-28);camera.fov=65;}
+        camera.updateProjectionMatrix();engine.player.runCycleTime=1;engine.player.poseRunner(0,1,0);
+        document.getElementById('stats').textContent=engine.zoneNames[zone]+' · '+engine.renderer.info.render.calls+' draws · '+(engine.renderer.info.render.triangles/1000).toFixed(0)+'k triangles';
+        ready=true;requestAnimationFrame(update);
+    };update();
+};
+</script></body></html>

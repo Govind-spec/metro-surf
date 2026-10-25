@@ -1,0 +1,62 @@
+[
+  {
+    "style": "default",
+    "lead": true,
+    "meshes": 13,
+    "triangles": 27004
+  },
+  {
+    "style": "default",
+    "lead": false,
+    "meshes": 9,
+    "triangles": 24976
+  },
+  {
+    "style": "city",
+    "lead": true,
+    "meshes": 17,
+    "triangles": 28708
+  },
+  {
+    "style": "city",
+    "lead": false,
+    "meshes": 13,
+    "triangles": 26680
+  },
+  {
+    "style": "neon",
+    "lead": true,
+    "meshes": 12,
+    "triangles": 27584
+  },
+  {
+    "style": "neon",
+    "lead": false,
+    "meshes": 10,
+    "triangles": 25544
+  },
+  {
+    "style": "graffiti",
+    "lead": true,
+    "meshes": 14,
+    "triangles": 25946
+  },
+  {
+    "style": "graffiti",
+    "lead": false,
+    "meshes": 11,
+    "triangles": 23892
+  },
+  {
+    "style": "premium",
+    "lead": true,
+    "meshes": 12,
+    "triangles": 28744
+  },
+  {
+    "style": "premium",
+    "lead": false,
+    "meshes": 11,
+    "triangles": 27012
+  }
+]

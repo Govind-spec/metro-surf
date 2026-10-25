@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>METRO DASH train inspection</title>
+<style>
+body{margin:0;background:#142536;color:#fff;font:14px system-ui}nav{position:fixed;inset:0 0 auto;padding:12px 18px;z-index:2;display:flex;gap:12px;align-items:center;background:#142536;height:40px}select{font:inherit;padding:7px 12px;border:0;border-radius:7px}span{margin-left:auto;font-size:12px;color:#b9d6e3}iframe{position:fixed;top:64px;left:0;border:0;width:100%;height:calc(100% - 64px)}
+</style></head><body>
+<nav><b>Reference train inspection</b><select id="view"><option>Fleet</option><option>Three-quarter</option><option>Front</option><option>Side</option><option>Roof</option><option>Gameplay</option></select><select id="train"><option value="0">Default</option><option value="1">City</option><option value="2">Neon</option><option value="3">Graffiti</option><option value="4">Premium</option></select><span id="stats">Loading local game…</span></nav>
+<iframe src="../endless_runner.html" id="game"></iframe>
+<script>
+const frame = document.getElementById('game');
+let engine, fleet, solo, ready = false;
+frame.onload = () => {
+    try {
+        const win = frame.contentWindow, T = win.THREE;
+        engine = win.eval('GameEngine'); engine.state = 'INSPECT';
+        for (const id of ['screen-start','screen-pause','screen-gameover','hud-header','touch-controls','rift-drawer']) frame.contentDocument.getElementById(id).style.display = 'none';
+        const factory = win.eval('CartoonArtFactory');
+        const scene = engine.scene, originalBackground = scene.background.clone(), originalFog = scene.fog;
+        const environment = scene.children.filter(o => !o.isLight && o !== engine.player.group && o !== engine.player.blobShadow);
+        const stage = new T.Group(); scene.add(stage);
+        const ground = new T.Mesh(new T.PlaneGeometry(200, 200), new T.MeshStandardMaterial({color:0xb6c8d4,roughness:1}));
+        ground.rotation.x = -Math.PI/2; ground.position.y = -0.015; ground.receiveShadow = true; scene.add(ground);
+        fleet = engine.trainLiveries.map((livery,i) => { const car = factory.buildCartoonTrainCar(livery,true);car.position.x=(i-2)*4.15;stage.add(car);return car; });
+        solo = factory.buildCartoonTrainCar(engine.trainLiveries[0],true);stage.add(solo);
+        const gameplay = new T.Group();scene.add(gameplay);
+        for (const [style,x,z] of [[0,-3.2,-9],[1,3.2,-9],[2,0,-39],[3,-3.2,-35],[4,3.2,-42]]) {const car=factory.buildCartoonTrainCar(engine.trainLiveries[style],true);car.position.set(x,0,z);gameplay.add(car);}
+        for(let i=0;i<9;i++)engine.createStarCoin(0,0.95,-4-i*3.8);
+        let lastTrain=-1;
+        const update = () => {
+            const view=document.getElementById('view').value, index=Number(document.getElementById('train').value), inGame=view==='Gameplay';
+            if(index!==lastTrain){stage.remove(solo);solo=factory.buildCartoonTrainCar(engine.trainLiveries[index],true);stage.add(solo);lastTrain=index;}
+            environment.forEach(o=>o.visible=inGame);stage.visible=!inGame;gameplay.visible=inGame;ground.visible=!inGame;
+            engine.collectibles.forEach(o=>o.mesh.visible=inGame);
+            engine.player.group.visible=inGame;engine.player.blobShadow.visible=inGame;
+            scene.background=inGame?originalBackground:new T.Color(0xb0ddf3);scene.fog=inGame?originalFog:null;
+            fleet.forEach(o=>o.visible=view==='Fleet');solo.visible=view!=='Fleet';
+            const camera=engine.camera;
+            if(inGame){camera.position.set(0,4.5,8);camera.lookAt(0,1.5,-15);camera.fov=60;engine.player.runCycleTime=1;engine.player.poseRunner(0,1,0);}
+            else if(view==='Fleet'){camera.position.set(11,8,30);camera.lookAt(0,1.65,1.7);camera.fov=43;}
+            else if(view==='Front'){camera.position.set(0,2.5,14.5);camera.lookAt(0,1.9,7);camera.fov=36;}
+            else if(view==='Side'){camera.position.set(19,4.0,0);camera.lookAt(0,1.8,0);camera.fov=40;}
+            else if(view==='Roof'){camera.position.set(8,15,12);camera.lookAt(0,1.8,0);camera.fov=44;}
+            else{camera.position.set(9,6,16);camera.lookAt(0,1.7,1);camera.fov=43;}
+            camera.updateProjectionMatrix();
+            document.getElementById('stats').textContent=(inGame?'Game camera':view==='Fleet'?'Five primary reference designs':engine.trainLiveries[index].label)+' · roof 3.65m · '+engine.renderer.info.render.calls+' draws';
+            ready=true;requestAnimationFrame(update);
+        };update();
+    } catch(error) {document.getElementById('stats').textContent=error.message;throw error;}
+};
+</script></body></html>

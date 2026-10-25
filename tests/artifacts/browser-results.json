@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "errors": [],
+  "views": [
+    "Gameplay",
+    "Rear",
+    "Front",
+    "Side"
+  ],
+  "poses": [
+    "Run",
+    "Jump",
+    "Slide",
+    "Lane left",
+    "Lane right",
+    "Bonk"
+  ]
+}
