@@ -233,18 +233,6 @@
             <div id="hud-powerups" class="flex flex-wrap items-center gap-2"></div>
         </div>
 
-        <!-- Center HUD: Speed Class & Tempo Bar -->
-        <div class="hidden lg:flex flex-col items-center panel-cartoon-dark rounded-2xl px-5 py-2 pointer-events-auto">
-            <div class="flex items-center gap-2 text-xs font-arcade tracking-wider text-sky-200 uppercase">
-                <span>SPEED CLASS</span>
-                <span id="hud-tier-name" class="text-yellow-300 font-bold">GEAR 1 // CRUISING</span>
-            </div>
-            <div class="w-56 h-3 bg-slate-950 rounded-full overflow-hidden mt-1.5 p-0.5 border border-white/20">
-                <div id="hud-speed-bar" class="h-full rounded-full bg-gradient-to-r from-emerald-400 via-yellow-400 to-rose-500 transition-all duration-300" style="width: 25%"></div>
-            </div>
-            <div id="hud-speed-kmh" class="text-[11px] font-mono-tech text-amber-200 mt-0.5">120 KM/H</div>
-        </div>
-
         <!-- Right HUD: Utility Buttons & RIFT Drawer Trigger -->
         <div class="flex items-center gap-2 pointer-events-auto">
             <button id="btn-rift-drawer" title="RIFT Motion API & Live Tester" class="btn-cartoon bg-rose-500 hover:bg-rose-400 text-white text-xs sm:text-sm font-arcade px-3.5 py-2 rounded-xl flex items-center gap-2">
@@ -623,13 +611,6 @@
                 if (!withHorn) return;
                 this.playTone(370, 310, 0.28, 'sawtooth', 0.075);
                 this.playTone(466, 392, 0.30, 'sawtooth', 0.075, 0.02);
-            }
-
-            playTierUp() {
-                const chord = [440, 554.37, 659.25, 880];
-                chord.forEach((freq, i) => {
-                    this.playTone(freq, freq * 1.1, 0.18, 'triangle', 0.12, i * 0.06);
-                });
             }
 
             playCrash() {
@@ -2213,8 +2194,8 @@
                         if (GameEngine) GameEngine.spawnDustPuff(this.x, this.y + 0.08, 0, 10);
                     }
                 } else {
-                    // Follow ramp slopes smoothly up/down
-                    this.y = THREE.MathUtils.lerp(this.y, this.groundHeight, Math.min(1, dt * 28));
+                    // Stick to ramp decks exactly (a lerp lags >1m at top speed and drops Kip through the ramp into the train)
+                    this.y = onRampSurface ? this.groundHeight : THREE.MathUtils.lerp(this.y, this.groundHeight, Math.min(1, dt * 28));
                     this.vy = 0;
                     if (this.groundHeight >= 3.2) {
                         this.isOnTrainRoof = true;
@@ -2269,6 +2250,27 @@
          * 4. CORE 3D CARTOON GAME ENGINE, CURATED WAVES, ROOF RUNNING & PARALLAX WORLD
          * ============================================================================
          */
+        const COIN_GAP = 4.2; // z-spacing between consecutive coins in a trail
+
+        // Lane combinations for one row of track. Every lane holds a different element or is empty, so rows
+        // never repeat the same thing side by side ('block' = hurdle or barrier, picked per row). Rows with two
+        // obstacles always get laid out with something else between them (see composeRow).
+        const TRACK_ROWS = [
+            { kinds: ['ramp', 'train', 'block'], weight: 3 },     // 2 trains + 1 obstacle
+            { kinds: ['ramp', 'mover', 'block'], weight: 2 },
+            { kinds: ['train', 'mover', 'block'], weight: 2 },
+            { kinds: ['train', 'HURDLE', 'HIGH_BARRIER'], weight: 2 }, // 1 train + 2 obstacles
+            { kinds: ['ramp', 'HURDLE', 'HIGH_BARRIER'], weight: 1.5 },
+            { kinds: ['train', 'block', 'empty'], weight: 2 },    // 1 train + 1 obstacle + free lane
+            { kinds: ['ramp', 'block', 'empty'], weight: 1.5 },
+            { kinds: ['mover', 'block', 'empty'], weight: 1.5 },
+            { kinds: ['ramp', 'train', 'empty'], weight: 1.5 },   // 2 trains + free lane
+            { kinds: ['ramp', 'mover', 'empty'], weight: 1 },
+            { kinds: ['HURDLE', 'mover', 'HIGH_BARRIER'], weight: 1.5 }, // 2 obstacles with a train between
+            { kinds: ['block', 'empty', 'empty'], weight: 1 },    // 1 obstacle + 2 free lanes
+            { kinds: ['train', 'empty', 'empty'], weight: 0.7 }
+        ];
+
         class MetroDashGameEngine {
             constructor() {
                 this.state = 'MENU';
@@ -2280,7 +2282,6 @@
 
                 this.baseSpeed = 30;
                 this.currentSpeed = 30;
-                this.speedTier = 1;
                 this.cameraShake = 0;
                 this.cameraZoomPunch = 0;
                 this.attractAngle = 0;
@@ -2300,9 +2301,7 @@
                 this.particles = [];
                 this.clouds = [];
                 this.rotatingProps = [];
-                this.spawnTimer = 0;
-                this.waveCounter = 0;
-                this.lastSafeLaneIndex = 1;
+                this.trackEndZ = -70; // z where the laid-out track currently ends (scrolls toward the player)
 
                 // Multi-layer Subway World & Parallax Pools
                 this.trackChunks = [];
@@ -2498,6 +2497,81 @@
                 return true;
             }
 
+            /**
+             * Fast-forwards every train and ramp (plus the candidate) past the player's line and checks a way
+             * through always exists, on two levels: the ground, and the roofs you reach via a ramp. You can
+             * side-step between open ground lanes, climb a ramp, hop roof to roof, and drop off when a roof ends.
+             * Trains from different waves drift together (oncoming vs parked), so a per-wave check is not enough.
+             */
+            keepsEscapePath(candidates) {
+                return this.reachSim(candidates).ok;
+            }
+
+            /** True if you can get onto the roof of these (oncoming) train cars while they pass you. */
+            canBoard(cars) {
+                return this.reachSim([], new Set(cars)).boarded;
+            }
+
+            /**
+             * The model behind keepsEscapePath / canBoard. Returns { ok, boarded }: ok = never trapped,
+             * boarded = the roof-level reach touched one of the `watch` obstacles while it passed the player.
+             */
+            reachSim(candidates, watch = null) {
+                const S = Math.max(1, this.currentSpeed);
+                const items = candidates.slice();
+                for (const o of this.obstacles) {
+                    if (o.kind !== 'TRAIN' && o.kind !== 'RAMP') continue;
+                    items.push({ x: o.x, front: o.z + o.halfLen, back: o.z - o.halfLen, relSpeed: o.relSpeed || 0,
+                        ramp: o.kind === 'RAMP', ramped: !!o.ramped, watched: !!(watch && watch.has(o)) });
+                }
+                // A gap of up to 14m between trains in one lane is jumpable roof to roof: bridge it at roof level
+                const roofs = items.filter((t) => !t.ramp);
+                for (const a of roofs) {
+                    for (const b of roofs) {
+                        if (b.x === a.x && b.relSpeed === a.relSpeed && b.front < a.back && a.back - b.front <= 14) {
+                            items.push({ x: a.x, front: a.back, back: b.front, relSpeed: a.relSpeed, bridge: true });
+                        }
+                    }
+                }
+                const slack = 0.25; // seconds to get out of a lane before a train front reaches you
+                let horizon = 0;
+                for (const t of items) horizon = Math.max(horizon, -t.back / (S + t.relSpeed) + slack);
+
+                const adj = (m) => ((m << 1) | (m >> 1)) & 0b111;
+                let ground = 0b111, roof = 0, boardedSteps = 0, passingSteps = 0;
+                for (let time = 0; time <= horizon; time += 0.04) {
+                    let free = 0b111, top = 0, ramp = 0, rampLow = 0, watchedTop = 0;
+                    for (const t of items) {
+                        const v = S + t.relSpeed, shift = v * time, bit = 1 << (Math.round(t.x / 3.2) + 1);
+                        const front = t.front + shift, back = t.back + shift;
+                        if (back - 0.6 <= 0 && front + 0.6 >= 0) { // 0.6 bridges ramp→car and car→car seams
+                            top |= bit;
+                            if (t.ramp) ramp |= bit;
+                            // Lower part of a ramp (< 2.6m up): you can't step across onto a roof from there
+                            if (t.ramp && front < 5.6) rampLow |= bit;
+                            if (t.watched) watchedTop |= bit;
+                        }
+                        // A train behind a ramp needs no front slack: you meet the ramp, not its nose
+                        if (!t.ramp && !t.bridge && back - v * 0.08 <= 0 && front + (t.ramped ? 0 : v * slack) >= 0) free &= ~bit;
+                    }
+                    let r = (roof | (ground & ramp)) & top;
+                    let g = (ground | roof) & free;
+                    for (let k = 0; k < 2; k++) {
+                        g |= (adj(g) | adj(r)) & free;  // side-step on the ground, or jump down sideways
+                        r |= (adj(r & ~rampLow) & top) | (adj(g) & ramp); // hop across roofs, or side-step onto a ramp
+                    }
+                    ground = g; roof = r;
+                    if (watchedTop) passingSteps++;
+                    if (r & watchedTop) boardedSteps++;
+                    // You must be able to ride it for most of its pass (else its roof coins go by before you're
+                    // up), and for at least a quarter second: time to step across, plus margin for the game
+                    // speeding up after spawn (which shifts the mover's arrival slightly)
+                    const boarded = boardedSteps >= Math.max(6, 0.8 * passingSteps);
+                    if (!(g | r)) return { ok: false, boarded };
+                }
+                return { ok: true, boarded: boardedSteps >= Math.max(6, 0.8 * passingSteps) };
+            }
+
             spawnTrainConvoy(laneX, firstCarZ, numCars, isMoving, liveryIdx, withRamp = false) {
                 const carSpacing = 15.2;
                 // Ramp-connected trains move at game speed (relSpeed = 0) so the boarding ramp stays attached;
@@ -2507,7 +2581,19 @@
                 const zFront = withRamp ? (firstCarZ + 11.4 + 3.9) : (firstCarZ + 7.2);
                 const zBack = firstCarZ - (numCars - 1) * carSpacing - 7.2;
 
-                if (!this.isLaneClearForSpawn(laneX, zFront, zBack, relSpeed, 20)) {
+                // Parked trains may queue up close behind each other; oncoming ones need a long clear run
+                if (!this.isLaneClearForSpawn(laneX, zFront, zBack, relSpeed, relSpeed > 0 ? 20 : 9)) {
+                    return false;
+                }
+                const candidates = [{ x: laneX, front: firstCarZ + 7.2, back: zBack, relSpeed, ramped: withRamp }];
+                if (withRamp) candidates.push({ x: laneX, front: zFront, back: firstCarZ + 7.5, relSpeed: 0, ramp: true });
+                if (!this.keepsEscapePath(candidates)) {
+                    return false;
+                }
+                // Don't cut off the way onto an oncoming coin train that is still on its way
+                this.coinTrains = (this.coinTrains || []).filter((cars) => this.obstacles.includes(cars[cars.length - 1]) &&
+                    cars[cars.length - 1].z - cars[cars.length - 1].halfLen < 0);
+                if (this.coinTrains.some((cars) => !this.reachSim(candidates, new Set(cars)).boarded)) {
                     return false;
                 }
 
@@ -2515,130 +2601,277 @@
                     this.createBoardingRamp(laneX, firstCarZ + 11.4);
                 }
 
+                const firstCarIdx = this.obstacles.length;
                 for (let c = 0; c < numCars; c++) {
                     const carZ = firstCarZ - c * carSpacing;
                     this.createPlayableTrain(laneX, carZ, isMoving && !withRamp, liveryIdx, relSpeed, c === 0);
                 }
+                this.obstacles[firstCarIdx].ramped = withRamp;
+                // What this convoy is, for the "no identical elements side by side" rule (clashesWithNeighbour)
+                const element = withRamp ? 'ramp' : (relSpeed > 0 ? 'mover' : 'train');
+                for (let i = withRamp ? firstCarIdx - 1 : firstCarIdx; i < this.obstacles.length; i++) {
+                    this.obstacles[i].element = element;
+                }
                 return true;
             }
 
+            /**
+             * Lays the next stretch of track, Subway Surfers style. Usually one row where every lane gets a
+             * different element (parked train, ramp train, oncoming train, hurdle, barrier) or stays empty;
+             * now and then a ramp-up roof-hopping highway. Every train still has to pass keepsEscapePath,
+             * so a way through always exists.
+             */
             spawnWave() {
-                const lanes = [-3.2, 0, 3.2];
+                const z0 = this.trackEndZ - (12 + Math.random() * 14);
+                const firstNew = this.obstacles.length;
+                const progress = Math.min(1, this.distance / 900);
+                if (Math.random() < 0.06 + 0.08 * progress) this.chunkRoofHighway(z0);
+                else this.composeRow(z0);
 
-                // Oncoming train speed scales smoothly with current game speed
-                const oncomingRelSpeed = Math.round(this.currentSpeed * 0.36);
-                // Guarantee 2.6 to 3.1 seconds of reaction distance for oncoming trains
-                const reactionSeconds = 2.75 + Math.random() * 0.35;
-                const z0 = -Math.max(135, Math.round((this.currentSpeed + oncomingRelSpeed) * reactionSeconds));
+                let back = z0 - 24;
+                for (let i = firstNew; i < this.obstacles.length; i++) {
+                    back = Math.min(back, this.obstacles[i].z - this.obstacles[i].halfLen);
+                }
+                this.trackEndZ = back;
+            }
 
-                // Pick a randomized lane permutation while ensuring a reachable safe lane from lastSafeLaneIndex
-                const candidateSafeLanes = [0, 1, 2].filter(
-                    (idx) => Math.abs(idx - this.lastSafeLaneIndex) <= 1
-                );
-                const safeLaneIdx = candidateSafeLanes[Math.floor(Math.random() * candidateSafeLanes.length)];
-                const otherLanes = [0, 1, 2].filter((idx) => idx !== safeLaneIdx);
-                if (Math.random() < 0.5) otherLanes.reverse();
+            /** Picks a lane combination (never the same as last time) and lays each lane's element, staggered a little. */
+            composeRow(z0) {
+                const total = TRACK_ROWS.reduce((sum, row) => sum + row.weight, 0);
+                let pick;
+                do {
+                    let roll = Math.random() * total;
+                    pick = TRACK_ROWS.findIndex((row) => (roll -= row.weight) < 0);
+                } while (pick === this.lastRow);
+                this.lastRow = pick;
 
-                const primaryTrainLane = otherLanes[0];
-                const secondaryLane = otherLanes[1];
-                this.lastSafeLaneIndex = safeLaneIdx;
+                const kinds = TRACK_ROWS[pick].kinds.map((k) => (k === 'block' ? this.randomBlock() : k));
+                // Lane order: two hurdles/barriers never sit side by side, and an oncoming train goes right next
+                // to the ramp train so you can climb the ramp and step across onto its roof
+                const isBlock = (k) => k === 'HURDLE' || k === 'HIGH_BARRIER';
+                const ri = kinds.indexOf('ramp'), mi = kinds.indexOf('mover');
+                let lanes;
+                do {
+                    lanes = this.shuffledLanes();
+                } while (kinds.some((k, i) => kinds.some((k2, j) => j > i && isBlock(k) && isBlock(k2) &&
+                    Math.abs(lanes[i] - lanes[j]) === 1)) || (ri >= 0 && mi >= 0 && Math.abs(lanes[ri] - lanes[mi]) !== 1));
 
-                // Select varied pattern with difficulty scaling
-                const patternPool = this.speedTier >= 2 ? [0, 1, 2, 3, 4] : [0, 1, 2, 3];
-                const pattern = patternPool[(this.waveCounter + Math.floor(Math.random() * 2)) % patternPool.length];
-                this.waveCounter++;
-
-                const liveryA = Math.floor(Math.random() * this.trainLiveries.length);
-                const liveryB = (liveryA + 1 + Math.floor(Math.random() * 2)) % this.trainLiveries.length;
-
-                if (pattern === 0) {
-                    // PATTERN A: Oncoming Moving Train (1-2 cars) + Staggered Second Train + Open Safe Path
-                    const carsA = this.speedTier >= 3 && Math.random() < 0.5 ? 2 : 1;
-                    this.spawnTrainConvoy(lanes[primaryTrainLane], z0, carsA, true, liveryA, false);
-
-                    // Stagger the second lane train significantly further back so the player can weave cleanly
-                    const staggerZ = z0 - (carsA * 15.0 + 26.0);
-                    this.spawnTrainConvoy(lanes[secondaryLane], staggerZ, 1, true, liveryB, false);
-
-                    // Optional jump hurdle or slide barrier in the safe lane with plenty of clearance
-                    if (this.isLaneClearForSpawn(lanes[safeLaneIdx], z0 - 6, z0 - 10, 0, 14)) {
-                        const obsKind = Math.random() < 0.5 ? 'HURDLE' : 'HIGH_BARRIER';
-                        this.createObstacle(obsKind, lanes[safeLaneIdx], z0 - 8.0);
-                    }
-
-                    // Coin trail along the safe lane leading into the gap
-                    for (let c = 0; c < 6; c++) {
-                        const phase = (c / 5) * Math.PI;
-                        this.createStarCoin(lanes[safeLaneIdx], 0.95 + Math.sin(phase) * 1.15, z0 + 6.0 - c * 3.2);
-                    }
-                } else if (pattern === 1) {
-                    // PATTERN B: Rooftop Boarding Ramp Convoy + Adjacent Train for Train-to-Train Jumping!
-                    const spawnedRampTrain = this.spawnTrainConvoy(lanes[primaryTrainLane], z0 - 11.4, 2, false, liveryA, true);
-                    // Parallel train offset behind so player on top of the first train can jump across to it!
-                    this.spawnTrainConvoy(lanes[secondaryLane], z0 - 28.0, 2, false, liveryB, false);
-
-                    if (spawnedRampTrain) {
-                        for (let c = 0; c < 6; c++) {
-                            const cz = z0 + 2.5 - c * 3.6;
-                            const cy = c < 3 ? (0.90 + c * 1.2) : 4.55;
-                            this.createStarCoin(lanes[primaryTrainLane], cy, cz);
+                // One coin line per row: a ramp carries its own, otherwise a hurdle/barrier or empty lane gets it
+                const open = kinds.map((k, i) => i).filter((i) => !['ramp', 'train', 'mover'].includes(kinds[i]));
+                const coinIdx = ri >= 0 || !open.length ? -1 : open[Math.floor(Math.random() * open.length)];
+                // Ramp first, so a paired oncoming train can be timed against it
+                const order = kinds.map((k, i) => i).sort((a, b) => (b === ri) - (a === ri));
+                let rampRoofFront = null;
+                for (const i of order) {
+                    const z = z0 - Math.random() * 8;
+                    if (i === ri) {
+                        if (this.rampRun(lanes[i], z, mi >= 0 ? 3 : 2 + Math.floor(Math.random() * 2)) !== null) {
+                            rampRoofFront = z - 7.8;
                         }
-                        // Coins guiding a train-to-train jump onto the second train roof
-                        for (let c = 0; c < 4; c++) {
-                            this.createStarCoin(lanes[secondaryLane], 4.55, z0 - 23.0 - c * 3.6);
-                        }
-                        if (Math.random() < 0.7) {
-                            this.createPowerupItem(lanes[secondaryLane], 4.75, z0 - 38.0);
-                        }
+                    } else if (i === mi && rampRoofFront !== null) {
+                        // Pass you while you're mid-roof (its 2 cars sweep ~22m of a 45m roof): a parked point at z
+                        // meets you when a mover front at z * (S + rel) / S does
+                        const S = Math.max(1, this.currentSpeed), rel = Math.round(S * 0.36);
+                        this.runTrain(lanes[i], (rampRoofFront - 11) * (S + rel) / S, 2, false, true);
+                    } else {
+                        this.placeElement(kinds[i], lanes[i], z, i === coinIdx);
                     }
+                }
+            }
 
-                    // Keep safeLaneIdx passable on the ground
-                    for (let c = 0; c < 5; c++) {
-                        this.createStarCoin(lanes[safeLaneIdx], 0.95, z0 - 4.0 - c * 3.4);
-                    }
-                } else if (pattern === 2) {
-                    // PATTERN C: Dual Approaching Trains in 2 Lanes + Guaranteed Safe 3rd Lane
-                    this.spawnTrainConvoy(lanes[primaryTrainLane], z0, 1, true, liveryA, false);
-                    this.spawnTrainConvoy(lanes[secondaryLane], z0 - 8.0, 1, true, liveryB, false);
-
-                    if (this.isLaneClearForSpawn(lanes[safeLaneIdx], z0 - 2, z0 - 6, 0, 14)) {
-                        this.createObstacle('HURDLE', lanes[safeLaneIdx], z0 - 4.0);
-                    }
-                    for (let c = 0; c < 5; c++) {
-                        const arcY = 0.95 + Math.sin((c / 4) * Math.PI) * 1.25;
-                        this.createStarCoin(lanes[safeLaneIdx], arcY, z0 + 2.0 - c * 3.0);
-                    }
-                    if (Math.random() < 0.55) {
-                        this.createPowerupItem(lanes[safeLaneIdx], 1.1, z0 - 16.0);
-                    }
-                } else if (pattern === 3) {
-                    // PATTERN D: Single Express Train + Slalom Hurdle/Barrier Rhythm
-                    const cars = this.speedTier >= 2 ? 2 : 1;
-                    this.spawnTrainConvoy(lanes[primaryTrainLane], z0, cars, true, liveryA, false);
-
-                    if (this.isLaneClearForSpawn(lanes[secondaryLane], z0, z0 - 4, 0, 14)) {
-                        this.createObstacle('HIGH_BARRIER', lanes[secondaryLane], z0 - 2.0);
-                    }
-                    if (this.isLaneClearForSpawn(lanes[safeLaneIdx], z0 - 16, z0 - 20, 0, 14)) {
-                        this.createObstacle('HURDLE', lanes[safeLaneIdx], z0 - 18.0);
-                    }
-
-                    // S-curve coin trail from safeLaneIdx to secondaryLane
-                    for (let c = 0; c < 6; c++) {
-                        const laneX = c < 3 ? lanes[safeLaneIdx] : lanes[secondaryLane];
-                        this.createStarCoin(laneX, 0.95, z0 + 4.0 - c * 3.5);
-                    }
+            placeElement(kind, lane, z, coins) {
+                const cars = 1 + Math.floor(Math.random() * 3);
+                if (kind === 'ramp') {
+                    this.rampRun(lane, z, Math.max(2, cars));
+                } else if (kind === 'train') {
+                    this.parkTrain(lane, z, cars);
+                } else if (kind === 'mover') {
+                    this.runTrain(lane, z, Math.min(2, cars), false);
+                } else if (kind === 'empty') {
+                    if (coins) this.createCoinRun(this.laneX(lane), z, 6);
+                    this.maybePowerup(this.laneX(lane), 1.1, z - 6 * COIN_GAP, 0.12);
                 } else {
-                    // PATTERN E: Staggered 3-Wave Express Train Slalom (Always 1-2 open lanes at every Z slice)
-                    this.spawnTrainConvoy(lanes[primaryTrainLane], z0, 1, true, liveryA, false);
-                    this.spawnTrainConvoy(lanes[secondaryLane], z0 - 28.0, 1, true, liveryB, false);
-                    this.spawnTrainConvoy(lanes[safeLaneIdx], z0 - 56.0, 1, true, (liveryA + 2) % this.trainLiveries.length, false);
-                    // Update lastSafeLaneIndex to primaryTrainLane since safeLaneIdx is occupied at the back of the slalom
-                    this.lastSafeLaneIndex = primaryTrainLane;
+                    // Hurdles sometimes come in pairs: two jumps in a row
+                    if (this.placeBlock(lane, z, kind, coins) && kind === 'HURDLE' && Math.random() < 0.15) {
+                        this.placeBlock(lane, z - 26, 'HURDLE', coins);
+                    }
+                }
+            }
 
-                    for (let c = 0; c < 4; c++) {
-                        this.createStarCoin(lanes[safeLaneIdx], 0.95, z0 - c * 3.5);
-                        this.createStarCoin(lanes[primaryTrainLane], 0.95, z0 - 28.0 - c * 3.5);
+            /**
+             * Ramp train, often followed in the same lane by more parked trains across 10-13m gaps: you run the
+             * roofs and jump each gap (walking off drops you in front of the next train's nose). Coins go up the
+             * ramp, along the roofs and arc over every gap. Returns the last back z, or null if refused.
+             */
+            rampRun(lane, frontZ, cars) {
+                let back = this.parkTrain(lane, frontZ, cars, true);
+                if (back === null) return null;
+                const gaps = [];
+                const extra = Math.random() < 0.3 ? (Math.random() < 0.15 ? 2 : 1) : 0;
+                for (let k = 0; k < extra; k++) {
+                    const gap = 10 + Math.random() * 3;
+                    const nBack = this.parkTrain(lane, back - gap, 1 + Math.floor(Math.random() * 2));
+                    if (nBack === null) break;
+                    gaps.push(back - gap / 2);
+                    back = nBack;
+                }
+                this.rampCoins(lane, frontZ, back + 4, gaps);
+                return back;
+            }
+
+            /**
+             * True if a neighbouring lane already holds the same element alongside [back, front]. Hurdles and
+             * barriers count as one family (a jump right beside a duck reads badly), with a wider margin.
+             */
+            clashesWithNeighbour(element, lane, front, back) {
+                const x = this.laneX(lane);
+                const isBlock = (e) => e === 'HURDLE' || e === 'HIGH_BARRIER';
+                const margin = isBlock(element) ? 12 : 6;
+                return this.obstacles.some((o) => (o.element === element || (isBlock(element) && isBlock(o.element))) &&
+                    Math.abs(Math.abs(o.x - x) - 3.2) < 0.5 && o.z - o.halfLen < front + margin && o.z + o.halfLen > back - margin);
+            }
+
+            laneX(lane) {
+                return (lane - 1) * 3.2;
+            }
+
+            shuffledLanes() {
+                const lanes = [0, 1, 2];
+                for (let i = 2; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [lanes[i], lanes[j]] = [lanes[j], lanes[i]];
+                }
+                return lanes;
+            }
+
+            /**
+             * Parked train whose nose (or ramp foot) sits at frontZ. Returns its back z, or null if refused.
+             * `distinct` refuses a spot right beside the same kind of train (the roof highway opts out).
+             */
+            parkTrain(lane, frontZ, cars, withRamp = false, distinct = true) {
+                const firstCarZ = frontZ - (withRamp ? 15.3 : 7.2);
+                const back = firstCarZ - (cars - 1) * 15.2 - 7.2;
+                if (distinct && this.clashesWithNeighbour(withRamp ? 'ramp' : 'train', lane, frontZ, back)) return null;
+                const livery = Math.floor(Math.random() * this.trainLiveries.length);
+                const first = this.obstacles.length;
+                if (!this.spawnTrainConvoy(this.laneX(lane), firstCarZ, cars, false, livery, withRamp)) return null;
+                // Roof-highway trains are meant to sit side by side; tag them so the clash rule ignores them
+                if (!distinct) for (let i = first; i < this.obstacles.length; i++) this.obstacles[i].element = 'hop';
+                return back;
+            }
+
+            /**
+             * Oncoming train; gets a coin line riding on its roof only if you can actually get up there (canBoard).
+             * `exact` launches it at frontZ or not at all (used to time it against a ramp); otherwise it may start
+             * further back. Optionally parks a train instead if the lane can't take a mover.
+             */
+            runTrain(lane, frontZ, cars, fallbackPark = true, exact = false) {
+                const x = this.laneX(lane);
+                const livery = Math.floor(Math.random() * this.trainLiveries.length);
+                // Start far enough back that it can't catch anything ahead in its lane (obstacles or ground coins)
+                // before that thing passes the player: it closes in at 0.36x game speed (see isLaneClearForSpawn)
+                let limit = frontZ;
+                for (const o of this.obstacles) {
+                    if (Math.abs(o.x - x) < 0.5) limit = Math.min(limit, 4 - 1.36 * (24 - (o.z - o.halfLen)) - 2);
+                }
+                for (const c of this.collectibles) {
+                    if (Math.abs(c.x - x) < 0.5 && !c.relSpeed && c.baseY < 3) limit = Math.min(limit, 4 - 1.36 * (24 - c.z) - 22);
+                }
+                const start = exact ? frontZ : limit;
+                const back = start - 7.2 - (cars - 1) * 15.2 - 7.2;
+                const fits = exact ? frontZ <= limit : limit > frontZ - 110;
+                const first = this.obstacles.length;
+                // Movers need distance to be readable, so never launch one close to the player
+                if (fits && start < -150 && start > -375 && !this.clashesWithNeighbour('mover', lane, start, back) &&
+                    this.spawnTrainConvoy(x, start - 7.2, cars, true, livery, false)) {
+                    const cars = this.obstacles.slice(first);
+                    if (this.canBoard(cars)) {
+                        this.coinTrains.push(cars);
+                        const relSpeed = Math.round(this.currentSpeed * 0.36);
+                        for (let z = start - 3; z > back + 3; z -= COIN_GAP) {
+                            this.createStarCoin(x, 4.55, z).relSpeed = relSpeed;
+                        }
+                    }
+                    return back;
+                }
+                return fallbackPark ? this.parkTrain(lane, frontZ, cars) : null;
+            }
+
+            /** Roof coins from fromZ to toZ; near any of `gaps` (gap centres) they arc along the jump across. */
+            roofCoins(lane, fromZ, toZ, gaps = []) {
+                for (let z = fromZ; z > toZ; z -= COIN_GAP) this.createStarCoin(this.laneX(lane), 4.55, z, this.nearestHop(z, gaps));
+            }
+
+            /** Coins up a ramp (foot at frontZ) and on along the roof behind it until toZ, arcing over roof gaps. */
+            rampCoins(lane, frontZ, toZ, gaps = []) {
+                for (let z = frontZ - 1.4; z > toZ; z -= COIN_GAP) {
+                    // Follow the deck (rises 3.65m over 7.8m) so coins never sink into it
+                    const deckY = Math.min(3.65, Math.max(0, (frontZ - z) / 7.8 * 3.65));
+                    if (deckY < 3.65) this.createStarCoin(this.laneX(lane), deckY + 1.1, z);
+                    else this.createStarCoin(this.laneX(lane), 4.55, z, this.nearestHop(z, gaps));
+                }
+            }
+
+            /** Coin offset from the nearest jump centre (for the arc), or undefined if there is none. */
+            nearestHop(z, centres) {
+                if (!centres.length) return undefined;
+                const c = centres.reduce((a, b) => (Math.abs(z - b) < Math.abs(z - a) ? b : a));
+                return z - c;
+            }
+
+            /** Hurdle or barrier with its coin line (jump arc / gap under the beam), if the lane is clear there. */
+            placeBlock(lane, z, kind, coins = true) {
+                if (!this.isLaneClearForSpawn(this.laneX(lane), z + 2, z - 2, 0, 12)) return false;
+                if (this.clashesWithNeighbour(kind, lane, z + 1, z - 1)) return false;
+                this.createObstacle(kind, this.laneX(lane), z);
+                if (coins) this.createCoinRun(this.laneX(lane), z + 3 * COIN_GAP, 7, kind, z);
+                return true;
+            }
+
+            randomBlock() {
+                return Math.random() < 0.55 ? 'HURDLE' : 'HIGH_BARRIER'; // jump-leaning mix
+            }
+
+            maybePowerup(x, y, z, chance) {
+                if (Math.random() < chance) this.createPowerupItem(x, y, z);
+            }
+
+            /** Ramp up, then a chain of staggered parked trains you hop across lane to lane; spare lanes get other elements. */
+            chunkRoofHighway(z0) {
+                let lane = Math.floor(Math.random() * 3);
+                let back = this.parkTrain(lane, z0, 2, true);
+                if (back === null) return this.composeRow(z0);
+                const laneBack = [z0, z0, z0];
+                laneBack[lane] = back;
+                const hops = 2 + Math.floor(Math.random() * 2);
+                let coinFrom = null, gaps = [];
+                // Coins for the stretch just run in `lane`: up the ramp first time, then along the roofs
+                const layCoins = (to) => (coinFrom === null ? this.rampCoins(lane, z0, to, gaps) : this.roofCoins(lane, coinFrom, to, gaps));
+                for (let k = 0; k < hops; k++) {
+                    if (Math.random() < 0.5) {
+                        // Same lane across a gap: run off the end and jump to the next roof
+                        const gap = 10 + Math.random() * 3;
+                        const nBack = this.parkTrain(lane, back - gap, 2, false, false);
+                        if (nBack === null) break;
+                        gaps.push(back - gap / 2);
+                        back = nBack; laneBack[lane] = nBack;
+                        continue;
+                    }
+                    const next = lane === 1 ? (Math.random() < 0.5 ? 0 : 2) : 1;
+                    // Next train starts alongside the last car so there is a stretch to hop across
+                    const front = Math.min(back + 15.2 + Math.random() * 6, laneBack[next] - 10);
+                    const nBack = this.parkTrain(next, front, 3, false, false);
+                    if (nBack === null) break;
+                    layCoins(back + 18);
+                    coinFrom = back + 12; gaps = [];
+                    lane = next; back = nBack; laneBack[next] = nBack;
+                }
+                layCoins(back + 4);
+
+                // A lane the route never uses gets an oncoming train or a hurdle/barrier, not another parked train
+                for (const l of [0, 1, 2]) {
+                    if (laneBack[l] > z0 - 20 && this.runTrain(l, z0 - 30, 2, false) === null) {
+                        this.placeBlock(l, z0 - 10, this.randomBlock(), false);
                     }
                 }
             }
@@ -2695,20 +2928,6 @@
                 const livery = this.trainLiveries[liveryIdx % this.trainLiveries.length];
                 const group = CartoonArtFactory.buildCartoonTrainCar(livery, isLeadCar);
                 group.position.set(x, 0, z);
-
-                // If moving oncoming lead train car, attach a high-visibility warning strip ahead of it
-                if (isMoving && isLeadCar) {
-                    const warnGeo = new THREE.PlaneGeometry(2.5, 15.0);
-                    warnGeo.rotateX(-Math.PI / 2);
-                    const warnMat = new THREE.MeshBasicMaterial({
-                        map: this.redWhiteStripeTex,
-                        transparent: true,
-                        opacity: 0.88
-                    });
-                    const warnStrip = new THREE.Mesh(warnGeo, warnMat);
-                    warnStrip.position.set(0, 0.12, 15.0);
-                    group.add(warnStrip);
-                }
 
                 const relSpeed = customRelSpeed !== null ? customRelSpeed : (isMoving ? Math.round(this.currentSpeed * 0.36) : 0);
 
@@ -2822,6 +3041,7 @@
                 this.obstacles.push({
                     group,
                     kind,
+                    element: kind,
                     x,
                     z,
                     halfLen: 0.72,
@@ -2835,7 +3055,16 @@
             /**
              * Spawns a spinning 3D cartoon golden Star Coin collectible
              */
-            createStarCoin(x, y, z) {
+            createCoinRun(x, zStart, count, obsKind = null, obsZ = 0) {
+                for (let c = 0; c < count; c++) {
+                    const z = zStart - c * COIN_GAP;
+                    // Big coins can't fit under the 1.34m slide beam, so leave a gap there instead of clipping through it
+                    if (obsKind === 'HIGH_BARRIER' && Math.abs(z - obsZ) < 1.4) continue;
+                    this.createStarCoin(x, 0.95, z, obsKind === 'HURDLE' ? z - obsZ : undefined);
+                }
+            }
+
+            createStarCoin(x, y, z, hop = undefined) {
                 if (!this._coinGeo) {
                     this._coinGeo = new THREE.CylinderGeometry(0.46, 0.46, 0.16, 16);
                     this._coinGeo.rotateX(Math.PI / 2);
@@ -2852,17 +3081,16 @@
                 const star = new THREE.Mesh(this._coinStarGeo, this._coinCenterMat);
                 star.scale.set(1, 1, 0.45);
                 mesh.add(disc, rim, star);
+                // Subway Surfers-sized coins; lift by the extra radius so the bigger coin still clears ground/roofs
+                mesh.scale.setScalar(1.45);
+                y += 0.25;
 
                 mesh.position.set(x, y, z);
                 this.scene.add(mesh);
 
-                this.collectibles.push({
-                    mesh,
-                    x,
-                    baseY: y,
-                    z,
-                    phase: z * 0.22
-                });
+                const coin = { mesh, x, baseY: y, z, hop, phase: z * 0.22 };
+                this.collectibles.push(coin);
+                return coin;
             }
 
             /**
@@ -3041,11 +3269,7 @@
                     if (obs.kind !== 'RAMP') continue;
                     if (Math.abs(playerX - obs.x) > 1.24) continue;
                     if (obs.z >= -obs.halfLen - 0.6 && obs.z <= obs.halfLen + 0.6) {
-                        const progress = THREE.MathUtils.clamp((obs.z + obs.halfLen) / (obs.halfLen * 2), 0, 1);
-                        const rampY = progress * obs.height;
-                        if (playerY >= rampY - 0.85) {
-                            return true;
-                        }
+                        return true;
                     }
                 }
                 return false;
@@ -3064,10 +3288,7 @@
                     if (obs.kind === 'RAMP') {
                         if (obs.z >= -obs.halfLen - 0.6 && obs.z <= obs.halfLen + 0.6) {
                             const progress = THREE.MathUtils.clamp((obs.z + obs.halfLen) / (obs.halfLen * 2), 0, 1);
-                            const rampY = progress * obs.height;
-                            if (playerY >= rampY - 0.85) {
-                                highestGround = Math.max(highestGround, rampY);
-                            }
+                            highestGround = Math.max(highestGround, progress * obs.height);
                         }
                     } else if (obs.kind === 'TRAIN') {
                         if (allowTrainRoof && obs.z >= -obs.halfLen - 0.5 && obs.z <= obs.halfLen + 0.5) {
@@ -3146,9 +3367,7 @@
                 this.orbs = 0;
                 this.combo = 1.0;
                 this.currentSpeed = this.baseSpeed;
-                this.speedTier = 1;
-                this.spawnTimer = 0.3;
-                this.waveCounter = 0;
+                this.trackEndZ = -70;
                 this.powerups = { MAGNET: 0, SNEAKERS: 0, MULTIPLIER: 0 };
                 this.state = 'PLAYING';
 
@@ -3256,27 +3475,9 @@
                 this.distance += (this.currentSpeed * dt) * 0.45;
                 this.score += (this.currentSpeed * dt) * 2.4 * this.combo * mult;
 
-                const targetSpeed = Math.min(68, this.baseSpeed + this.distance * 0.032) + (this.powerups.SNEAKERS > 0 ? 6 : 0);
+                // Gentle Subway Surfers-style ramp: ~30 → 56 over roughly three and a half minutes
+                const targetSpeed = Math.min(56, this.baseSpeed + this.distance * 0.009) + (this.powerups.SNEAKERS > 0 ? 6 : 0);
                 this.currentSpeed = THREE.MathUtils.lerp(this.currentSpeed, targetSpeed, dt * 2.5);
-
-                let newTier = 1;
-                let tierLabel = 'GEAR 1 // CRUISING';
-                if (this.currentSpeed >= 58) {
-                    newTier = 4;
-                    tierLabel = 'GEAR 4 // OVERDRIVE!';
-                } else if (this.currentSpeed >= 48) {
-                    newTier = 3;
-                    tierLabel = 'GEAR 3 // TURBO EXPRESS';
-                } else if (this.currentSpeed >= 38) {
-                    newTier = 2;
-                    tierLabel = 'GEAR 2 // FAST TRACK';
-                }
-
-                if (newTier > this.speedTier) {
-                    this.speedTier = newTier;
-                    Sound.playTierUp();
-                    this.showBanner(tierLabel, 'text-yellow-300');
-                }
 
                 // Update Active Power-Up Timers & Badges
                 const powerupContainer = document.getElementById('hud-powerups');
@@ -3310,11 +3511,6 @@
                 document.getElementById('hud-distance').textContent = `${Math.floor(this.distance)}m`;
                 document.getElementById('hud-orbs').textContent = String(this.orbs);
                 document.getElementById('hud-combo').textContent = `x${(this.combo * mult).toFixed(1)}`;
-                document.getElementById('hud-tier-name').textContent = tierLabel;
-
-                const pct = Math.min(100, ((this.currentSpeed - this.baseSpeed) / 38) * 75 + 25);
-                document.getElementById('hud-speed-bar').style.width = `${pct}%`;
-                document.getElementById('hud-speed-kmh').textContent = `${Math.floor(this.currentSpeed * 4.2)} KM/H`;
             }
 
             updateEnvironmentScroll(dt, scrollSpeed) {
@@ -3378,10 +3574,10 @@
                 const playerBox = this.player.getHitbox();
 
                 // Spawn Curated Waves with dynamic difficulty scaling
-                this.spawnTimer -= dt;
-                if (this.spawnTimer <= 0) {
+                // Lay the next stretch as soon as the end of the current one scrolls within range: no empty track
+                this.trackEndZ += this.currentSpeed * dt;
+                if (this.trackEndZ > -230) {
                     this.spawnWave();
-                    this.spawnTimer = Math.max(1.15, 2.15 - (this.currentSpeed - this.baseSpeed) * 0.022);
                 }
 
                 // Update Obstacles, Ramps & Playable Trains
@@ -3457,17 +3653,44 @@
 
                 for (let i = this.collectibles.length - 1; i >= 0; i--) {
                     const orb = this.collectibles[i];
-                    orb.z += this.currentSpeed * dt;
                     orb.phase += dt * 5.5;
 
-                    // If Magnet is active, pull coins from all lanes smoothly into Kip!
-                    if (magnetActive && orb.z > -32 && orb.z < 4) {
-                        orb.x = THREE.MathUtils.lerp(orb.x, this.player.x, dt * 11);
-                        orb.baseY = THREE.MathUtils.lerp(orb.baseY, this.player.y + 1.0, dt * 11);
+                    // Magnet (Subway Surfers style): once a coin in any lane enters range it locks on and
+                    // flies straight at Kip's chest, accelerating, even if the magnet runs out mid-flight.
+                    if (orb.pull === undefined && magnetActive && orb.z > -32 && orb.z < 2) {
+                        orb.pull = 0;
+                        orb.baseY = orb.mesh.position.y;
                     }
 
-                    orb.mesh.position.set(orb.x, orb.baseY + Math.sin(orb.phase) * 0.16, orb.z);
-                    orb.mesh.rotation.y += dt * 4.2;
+                    if (orb.pull !== undefined) {
+                        orb.pull += dt;
+                        const tx = this.player.x - orb.x;
+                        const ty = (this.player.y + 1.0) - orb.baseY;
+                        const tz = -orb.z;
+                        const dist = Math.hypot(tx, ty, tz);
+                        const step = Math.min(dist, (this.currentSpeed + 70 * orb.pull) * dt);
+                        if (dist > 1e-4) {
+                            orb.x += tx / dist * step;
+                            orb.baseY += ty / dist * step;
+                            orb.z += tz / dist * step;
+                        }
+                        orb.mesh.position.set(orb.x, orb.baseY, orb.z);
+                        orb.mesh.rotation.y += dt * 12;
+                    } else {
+                        orb.z += (this.currentSpeed + (orb.relSpeed || 0)) * dt; // roof coins ride their oncoming train
+                        let arcY = 0;
+                        if (orb.hop !== undefined) {
+                            // Hurdle coins trace Kip's real jump curve at the current speed, so one well-timed jump grabs them all
+                            // Roof coins follow the (stronger) roof-to-roof jump, ground coins the ground jump (see jump())
+                            const kicks = this.powerups.SNEAKERS > 0;
+                            const v0 = orb.baseY > 3 ? (kicks ? 19.5 : 17.2) : (kicks ? 18.0 : this.player.baseJumpForce);
+                            const g = this.player.gravity;
+                            const t = v0 / -g - orb.hop / Math.max(1, this.currentSpeed);
+                            arcY = Math.max(0, v0 * t + 0.5 * g * t * t);
+                        }
+                        orb.mesh.position.set(orb.x, orb.baseY + arcY + Math.sin(orb.phase) * 0.16, orb.z);
+                        orb.mesh.rotation.y += dt * 4.2;
+                    }
 
                     const dx = Math.abs(this.player.x - orb.x);
                     const dy = Math.abs((this.player.y + 0.95) - orb.mesh.position.y);

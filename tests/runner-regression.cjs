@@ -33,7 +33,7 @@ function boot(filename) {
         GameEngine = Object.assign(Object.create(MetroDashGameEngine.prototype), {
             state: 'PLAYING', scene: new THREE.Scene(), baseSpeed: 30, currentSpeed: 30,
             score: 0, distance: 0, combo: 1, orbs: 0, highScore: 0, speedTier: 1,
-            spawnTimer: 999, obstacles: [], collectibles: [], powerupItems: [], particles: [],
+            trackEndZ: -Infinity, obstacles: [], collectibles: [], powerupItems: [], particles: [],
             powerups: { MAGNET: 0, SNEAKERS: 0, MULTIPLIER: 0 },
             spawnDustPuff() {}, spawnComicPopup() {}, showBanner() {}
         });
@@ -79,7 +79,7 @@ console.log('PASS RIFT direct API, postMessage, simulated WebSocket, arrow input
 
 function collision(kind, y, sliding = false, roof = false, sneakers = 0) {
     p.reset(); p.y = y; p.isSliding = sliding; p.isOnTrainRoof = roof;
-    engine.state = 'PLAYING'; engine.currentSpeed = 0; engine.spawnTimer = 999;
+    engine.state = 'PLAYING'; engine.currentSpeed = 0; engine.trackEndZ = -Infinity;
     engine.powerups.SNEAKERS = sneakers;
     engine.obstacles = [{ kind, x: 0, z: 0, halfLen: 2, group: new THREE.Group(), passed: false }];
     let hit = false; const gameover = engine.triggerGameOver;
@@ -99,7 +99,7 @@ assert.equal(collision('TRAIN', 0, false, false, 10), true);
 engine.obstacles = [{ kind: 'TRAIN', x: 0, z: 0, halfLen: 8, height: 3.65 }];
 assert.equal(engine.getWalkableGroundHeight(0, 0, false), 0);
 assert.equal(engine.getWalkableGroundHeight(0, 3.65, true), 3.65);
-api.restartGame(); engine.currentSpeed = 0; engine.spawnTimer = 999;
+api.restartGame(); engine.currentSpeed = 0; engine.trackEndZ = -Infinity;
 for (const type of ['MAGNET', 'SNEAKERS', 'MULTIPLIER']) {
     engine.powerupItems = [{ type, x: 0, z: 0, baseY: 1, phase: 0, mesh: new THREE.Group() }];
     engine.updateObstaclesAndOrbs(0); assert.equal(engine.powerups[type], 10);
@@ -110,6 +110,9 @@ engine.updateObstaclesAndOrbs(0);
 assert.equal(engine.orbs, 1); assert.equal(engine.score - scoreBefore, 330);
 engine.collectibles = [{ x: 3.2, z: -10, baseY: 0.95, phase: 0, mesh: new THREE.Group() }];
 engine.updateObstaclesAndOrbs(1 / 60); assert.ok(engine.collectibles[0].x < 3.2);
+// Magnet-locked side-lane coin keeps flying in and is collected within a second
+for (let f = 0; f < 60 && engine.collectibles.length; f++) engine.updateObstaclesAndOrbs(1 / 60);
+assert.equal(engine.collectibles.length, 0); assert.equal(engine.orbs, 2);
 console.log('PASS hurdle/barrier/train collisions, roof gating, sneakers, magnet, multiplier and pickup scoring');
 
 // Run all visual states, then check that restart clears stale poses.
@@ -183,3 +186,79 @@ if (require.main === module && process.argv[2]) {
 }
 
 module.exports = { boot };
+
+// Jump arc: one well-timed jump over a hurdle collects the whole run-up/arc/landing coin line at any speed
+const T = 2 * p.baseJumpForce / -p.gravity;
+const step = (S) => { engine.currentSpeed = S; p.update(1 / 60, 1); engine.updateObstaclesAndOrbs(1 / 60); };
+for (const S of [30, 50, 68]) {
+    api.restartGame(); engine.trackEndZ = -Infinity; engine.obstacles = []; engine.collectibles = [];
+    engine.createObstacle('HURDLE', 0, -70);
+    engine.createCoinRun(0, -70 + 4 * 4.2, 9, 'HURDLE', -70);
+    const hurdle = engine.obstacles[0], orbsBefore = engine.orbs;
+    let jumped = false;
+    for (let f = 0; f < 600 && engine.collectibles.length; f++) {
+        if (!jumped && hurdle.z >= -S * T / 2) { p.jump(); jumped = true; }
+        step(S);
+    }
+    assert.equal(engine.state, 'PLAYING', `cleared hurdle at speed ${S}`);
+    assert.equal(engine.orbs - orbsBefore, 9, `collected every arc coin at speed ${S}`);
+}
+// Slide barrier: no coin overlaps the overhead beam
+engine.collectibles = []; engine.createCoinRun(0, -40 + 4 * 4.2, 9, 'HIGH_BARRIER', -40);
+assert.ok(engine.collectibles.every(o => Math.abs(o.z + 40) >= 1.4));
+// Ramp: head-on at top speed and a late lane switch onto the ramp both reach the roof safely
+engine.trainLiveries = app.run('CartoonArtFactory.createTrainLiveryTextures()');
+for (const [S, lane, switchAt] of [[68, 0, null], [40, 0, null], [40, 3.2, -1.5]]) {
+    api.restartGame(); engine.trackEndZ = -Infinity; engine.obstacles = []; engine.collectibles = [];
+    engine.spawnTrainConvoy(lane, -80 - 11.4, 2, false, 0, true);
+    const ramp = engine.obstacles.find(o => o.kind === 'RAMP');
+    let switched = false, maxY = 0;
+    for (let f = 0; f < 300 && engine.state === 'PLAYING'; f++) {
+        if (switchAt !== null && !switched && ramp.z >= switchAt) { api.moveRight(); switched = true; }
+        step(S); maxY = Math.max(maxY, p.y);
+    }
+    assert.equal(engine.state, 'PLAYING', `survived ramp at speed ${S}, lane ${lane}`);
+    assert.ok(maxY > 3.5, 'climbed onto the train roof');
+}
+console.log('PASS jump-arc coin runs at 30/50/68, slide-barrier coin gap, ramp climb at top speed and from a lane switch');
+// Coin train timed against a ramp: run up the ramp, step across onto the oncoming train, grab every roof coin
+for (const S of [30, 44, 56]) {
+    api.restartGame(); engine.trackEndZ = -Infinity; engine.obstacles = []; engine.collectibles = []; engine.coinTrains = [];
+    engine.currentSpeed = S;
+    engine.parkTrain(1, -200, 3, true);
+    const rel = Math.round(S * 0.36);
+    engine.runTrain(2, (-200 - 7.8 - 11) * (S + rel) / S, 2, false, true);
+    const roofCoins = engine.collectibles.filter((c) => c.relSpeed);
+    assert.ok(roofCoins.length > 0, `coin train spawned with roof coins at speed ${S}`);
+    const mover = engine.obstacles.find((o) => o.relSpeed > 0);
+    let stepped = false;
+    for (let f = 0; f < 900 && engine.state === 'PLAYING' && mover.z - mover.halfLen < 30; f++) {
+        if (!stepped && p.isOnTrainRoof && mover.z + mover.halfLen > -3) { api.moveRight(); stepped = true; }
+        step(S);
+    }
+    assert.equal(engine.state, 'PLAYING', `survived boarding the coin train at speed ${S}`);
+    // Collected coins are removed near the player; missed ones only once they scroll past z = 14
+    const collected = roofCoins.filter((c) => !engine.collectibles.includes(c) && c.z < 14).length;
+    assert.equal(collected, roofCoins.length, `collected all ${roofCoins.length} roof coins at speed ${S}`);
+}
+console.log('PASS ramp-timed coin train: climb, step across, collect every roof coin at 30/44/56');
+// Train-to-train jump: ramp up, run the roof, jump a 12m gap onto the next train, grab every coin incl. the arc
+for (const S of [30, 44, 56]) {
+    api.restartGame(); engine.trackEndZ = -Infinity; engine.obstacles = []; engine.collectibles = []; engine.coinTrains = [];
+    engine.currentSpeed = S;
+    const back1 = engine.parkTrain(1, -150, 2, true);
+    const back2 = engine.parkTrain(1, back1 - 12, 2);
+    engine.rampCoins(1, -150, back2 + 4, [back1 - 6]);
+    const coins = engine.collectibles.slice(), lead = engine.obstacles.find((o) => o.ramped);
+    const T_ROOF = 2 * 17.2 / -p.gravity, gapOffset = back1 - 6 - lead.z; // gap centre rides along with the parked train
+    let jumped = false;
+    for (let f = 0; f < 900 && engine.state === 'PLAYING' && engine.collectibles.length; f++) {
+        const gapCentre = lead.z + gapOffset;
+        if (!jumped && p.isOnTrainRoof && gapCentre >= -S * T_ROOF / 2) { api.jump(); jumped = true; }
+        step(S);
+    }
+    assert.equal(engine.state, 'PLAYING', `jumped the gap between trains at speed ${S}`);
+    const collected = coins.filter((c) => !engine.collectibles.includes(c) && c.z < 14).length;
+    assert.equal(collected, coins.length, `collected all ${coins.length} coins up the ramp, over the gap and on at speed ${S}`);
+}
+console.log('PASS train-to-train gap jump: survive and collect every coin (ramp, roof, arc) at 30/44/56');

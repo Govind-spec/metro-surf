@@ -87,12 +87,12 @@ fs.mkdirSync(artifacts, { recursive: true });
         await page.waitForFunction(() => window.RIFT && typeof GameEngine !== 'undefined' && GameEngine.player);
         await page.click('#btn-start-game');
         await page.evaluate(() => {
-            GameEngine.clearEntities(); GameEngine.spawnTimer = 999;
+            GameEngine.clearEntities(); GameEngine.trackEndZ = -Infinity;
             GameEngine.createPlayableTrain(0, -7.4, true, 2);
         });
         await page.waitForFunction(() => GameEngine.state === 'GAMEOVER');
         await page.evaluate(() => {
-            window.RIFT.restartGame(); GameEngine.clearEntities(); GameEngine.spawnTimer = 999;
+            window.RIFT.restartGame(); GameEngine.clearEntities(); GameEngine.trackEndZ = -Infinity;
             GameEngine.createBoardingRamp(0, -3.9);
             GameEngine.createPlayableTrain(0, -15.3, false, 4);
         });
