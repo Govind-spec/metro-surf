@@ -2250,7 +2250,7 @@
          * 4. CORE 3D CARTOON GAME ENGINE, CURATED WAVES, ROOF RUNNING & PARALLAX WORLD
          * ============================================================================
          */
-        const COIN_GAP = 4.2; // z-spacing between consecutive coins in a trail
+        const COIN_GAP = 5.25; // z-spacing between consecutive coins in a trail
 
         // Lane combinations for one row of track. Every lane holds a different element or is empty, so rows
         // never repeat the same thing side by side ('block' = hurdle or barrier, picked per row). Rows with two
@@ -2325,7 +2325,7 @@
                 this.trainLiveries = CartoonArtFactory.createTrainLiveryTextures();
                 this.billboardTextures = CartoonArtFactory.createBillboardTextures();
                 this.redWhiteStripeTex = CartoonArtFactory.createHazardStripeTexture('#ff3366', '#ffffff');
-                this.yellowOrangeStripeTex = CartoonArtFactory.createHazardStripeTexture('#ff7a00', '#ffd100');
+                this.yellowOrangeStripeTex = CartoonArtFactory.createHazardStripeTexture('#a65a3a', '#d9b68a');
 
                 this.initThreeScene();
                 this.buildEnvironment();
@@ -2342,7 +2342,7 @@
                 this.scene.fog = new THREE.FogExp2(0x9be7ff, 0.0022);
 
                 this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 380);
-                this.camera.position.set(0, 4.6, 8.2);
+                this.camera.position.set(0, 6.2, 11.8);
 
                 this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
                 this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -2688,8 +2688,8 @@
                 } else if (kind === 'mover') {
                     this.runTrain(lane, z, Math.min(2, cars), false);
                 } else if (kind === 'empty') {
-                    if (coins) this.createCoinRun(this.laneX(lane), z, 6);
-                    this.maybePowerup(this.laneX(lane), 1.1, z - 6 * COIN_GAP, 0.12);
+                    if (coins) this.createCoinRun(this.laneX(lane), z, 5);
+                    this.maybePowerup(this.laneX(lane), 1.1, z - 5 * COIN_GAP, 0.12);
                 } else {
                     // Hurdles sometimes come in pairs: two jumps in a row
                     if (this.placeBlock(lane, z, kind, coins) && kind === 'HURDLE' && Math.random() < 0.15) {
@@ -2824,7 +2824,7 @@
                 if (!this.isLaneClearForSpawn(this.laneX(lane), z + 2, z - 2, 0, 12)) return false;
                 if (this.clashesWithNeighbour(kind, lane, z + 1, z - 1)) return false;
                 this.createObstacle(kind, this.laneX(lane), z);
-                if (coins) this.createCoinRun(this.laneX(lane), z + 3 * COIN_GAP, 7, kind, z);
+                if (coins) this.createCoinRun(this.laneX(lane), z + 2 * COIN_GAP, 5, kind, z);
                 return true;
             }
 
@@ -2889,7 +2889,7 @@
                     map: this.yellowOrangeStripeTex,
                     roughness: 0.4
                 });
-                const sideMat = CartoonArtFactory.createToonMaterial(0xff7a00);
+                const sideMat = CartoonArtFactory.createToonMaterial(0x7a4630);
 
                 // Wedge built from a rotated deck + support frame
                 const hypotenuse = Math.sqrt(rampLen * rampLen + rampHeight * rampHeight);
@@ -3070,8 +3070,8 @@
                     this._coinGeo.rotateX(Math.PI / 2);
                     this._coinRimGeo = new THREE.TorusGeometry(0.46, 0.06, 8, 16);
                     this._coinStarGeo = new THREE.OctahedronGeometry(0.24, 0);
-                    this._coinGoldMat = CartoonArtFactory.createToonMaterial(0xffd100);
-                    this._coinOrangeMat = CartoonArtFactory.createToonMaterial(0xff9f1c);
+                    this._coinGoldMat = CartoonArtFactory.createRunnerToonMaterial(0xffb300, 0.35);
+                    this._coinOrangeMat = CartoonArtFactory.createRunnerToonMaterial(0xff8a00, 0.3);
                     this._coinCenterMat = new THREE.MeshBasicMaterial({ color: 0xfffbeb });
                 }
 
@@ -3782,15 +3782,15 @@
                 if (this.state === 'MENU') {
                     this.attractAngle += dt * 0.45;
                     this.camera.position.x = Math.sin(this.attractAngle) * 3.6;
-                    this.camera.position.y = 4.0 + Math.sin(this.attractAngle * 2) * 0.4;
-                    this.camera.position.z = 7.2;
+                    this.camera.position.y = 5.6 + Math.sin(this.attractAngle * 2) * 0.4;
+                    this.camera.position.z = 10.8;
                     this.camera.lookAt(0, 1.5, -16);
                     return;
                 }
 
                 const targetCamX = this.player.x * 0.65;
-                const targetCamY = 4.5 + (this.player.y * 0.55) - (this.player.isSliding ? 0.55 : 0);
-                const targetCamZ = 8.0 - (this.cameraZoomPunch * 1.4);
+                const targetCamY = Math.min(7.8, 6.2 + this.player.y * 0.3) - (this.player.isSliding ? 0.55 : 0);
+                const targetCamZ = 11.8 - (this.cameraZoomPunch * 1.4);
 
                 this.cameraZoomPunch = Math.max(0, this.cameraZoomPunch - dt * 1.5);
 
@@ -3808,7 +3808,7 @@
                 this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, dt * 5);
                 this.camera.updateProjectionMatrix();
 
-                this.camera.lookAt(this.player.x * 0.35, 1.5 + this.player.y * 0.45, -15);
+                this.camera.lookAt(this.player.x * 0.35, 1.2 + this.player.y * 0.45, -18);
             }
 
             tick() {

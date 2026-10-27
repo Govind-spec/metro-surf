@@ -348,15 +348,15 @@ class MetroMallEnvironment {
         if (this.templates.has(key)) return this.templates.get(key).clone(true);
         const g = new THREE.Group(); g.name = 'MallCity.CyanPortal';
         for (const side of [-1, 1]) {
-            this.box(g, .38, 9.0, .42, 'cyan', side * 6.1, 4.5, -7);
+            this.box(g, .38, 12.0, .42, 'cyan', side * 6.1, 6.0, -7);
             this.box(g, .58, .25, .60, 'teal', side * 6.1, .40, -7);
-            this.box(g, .07, .90, .07, 'ink', side * 4.8, 8.40, -7);
+            this.box(g, .07, 3.90, .07, 'ink', side * 4.8, 9.90, -7);
             this.panel(g, .98, 2.45, (variant + (side > 0 ? 1 : 0)) % 2 ? 'banner-bunny' : 'banner-smile', side * 4.8, 6.65, -6.94, 0, 'yellow');
         }
-        this.box(g, 12.9, .45, .5, 'cyan', 0, 8.94, -7);
+        this.box(g, 12.9, .45, .5, 'cyan', 0, 11.94, -7);
         for (const x of [-3.2, 0, 3.2]) {
-            this.cylinder(g, .12, .15, .54, 'yellow', x, 8.51, -7);
-            this.box(g, .12, .10, .38, 'ink', x, 8.23, -7);
+            this.cylinder(g, .12, .15, .54, 'yellow', x, 11.51, -7);
+            this.box(g, .12, .10, .38, 'ink', x, 11.23, -7);
         }
         this.batch(g); this.templates.set(key, g); return g.clone(true);
     }
@@ -437,7 +437,7 @@ class MetroMallEnvironment {
                 this.box(ground, .22, .075, 360, 'ink', x + side * .74, .055, -135);
                 this.box(ground, .105, .10, 360, 'rail', x + side * .74, .12, -135);
             }
-            this.box(ground, .038, .038, 360, 'ink', x, 8.23, -135);
+            this.box(ground, .038, .038, 360, 'ink', x, 11.23, -135);
         }
         this.batch(ground); e.scene.add(ground);
         // A shader sky retains the reference's clean blue instead of applying
